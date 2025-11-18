@@ -20,11 +20,16 @@ Este repositorio contiene un paquete de ROS (catkin) para arrancar nodos de cám
    source devel/setup.bash
    ```
 
-2. Lanza cada nodo. Por ejemplo, con `rosrun`:
+2. Lanza cada nodo. Por ejemplo, con `rosrun` o mediante los ficheros de `launch` incluidos:
 
    ```bash
    rosrun battleship_vision hand_camera_node.py
    rosrun battleship_vision board_camera_node.py
+   # o bien
+   roslaunch battleship_vision hand_camera.launch
+   roslaunch battleship_vision board_camera.launch
+   # o ambas cámaras a la vez
+   roslaunch battleship_vision cameras.launch
    ```
 
    Cada nodo iterará automáticamente sobre los índices de cámara USB (`0-9` por defecto) hasta encontrar uno operativo.
@@ -34,6 +39,8 @@ Este repositorio contiene un paquete de ROS (catkin) para arrancar nodos de cám
    - `camera_indices` (lista): índices a probar, p. ej. `[2,3,4]`.
    - `frame_width`, `frame_height`: resolución deseada (por defecto `1280x720`).
    - `publish_rate`: frecuencia en Hz (`10.0` por defecto).
+   - `retry_delay`: segundos de espera antes de reintentar apertura o lectura (`1.0` por defecto).
+   - `max_consecutive_failures`: número de frames fallidos antes de reabrir la cámara (`5` por defecto).
    - `image_topic`: tópico de publicación (por defecto `hand_camera/image_raw` o `board_camera/image_raw`).
    - `frame_id`: frame de la imagen.
 

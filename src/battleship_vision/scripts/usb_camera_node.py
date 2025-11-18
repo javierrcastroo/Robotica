@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+from typing import Iterable
+
 import cv2
 import rospy
-from cv_bridge import CvBridge
+from cv_bridge import CvBridge, CvBridgeError
 from sensor_msgs.msg import Image
 
 
@@ -11,15 +13,29 @@ class USBCameraNode:
         self.bridge = CvBridge()
         self.topic = rospy.get_param("~image_topic", default_topic)
         self.frame_id = rospy.get_param("~frame_id", default_frame)
-        self.indices = rospy.get_param("~camera_indices", list(range(0, 10)))
+        self.indices = self._normalize_indices(rospy.get_param("~camera_indices", list(range(0, 10))))
         self.frame_width = rospy.get_param("~frame_width", 1280)
         self.frame_height = rospy.get_param("~frame_height", 720)
         publish_rate = rospy.get_param("~publish_rate", 10.0)
+        self.retry_delay = rospy.get_param("~retry_delay", 1.0)
+        self.max_consecutive_failures = rospy.get_param("~max_consecutive_failures", 5)
         self.rate = rospy.Rate(publish_rate)
 
         self.publisher = rospy.Publisher(self.topic, Image, queue_size=1)
         self.camera_index = None
         self.capture = None
+        self.consecutive_failures = 0
+
+        rospy.on_shutdown(self.shutdown)
+
+    @staticmethod
+    def _normalize_indices(indices_param) -> Iterable[int]:
+        if isinstance(indices_param, list):
+            return indices_param
+        if isinstance(indices_param, (int, float)):
+            return [int(indices_param)]
+        rospy.logwarn("[%s] Unexpected camera_indices param type %s, falling back to 0-9", rospy.get_name(), type(indices_param))
+        return list(range(0, 10))
 
     def _open_camera(self):
         for index in self.indices:
@@ -51,7 +67,7 @@ class USBCameraNode:
         if self.capture is None:
             self.capture = self._open_camera()
             if self.capture is None:
-                rospy.sleep(1.0)
+                rospy.sleep(self.retry_delay)
                 return False
         return True
 
@@ -62,17 +78,39 @@ class USBCameraNode:
 
             ok, frame = self.capture.read()
             if not ok or frame is None:
-                rospy.logwarn(
-                    "[%s] Lost connection to camera index %s. Retrying other indices...",
-                    rospy.get_name(),
-                    self.camera_index,
-                )
-                self.capture.release()
-                self.capture = None
-                self.camera_index = None
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= self.max_consecutive_failures:
+                    rospy.logwarn(
+                        "[%s] Lost connection to camera index %s after %d failures. Retrying other indices...",
+                        rospy.get_name(),
+                        self.camera_index,
+                        self.consecutive_failures,
+                    )
+                    self.capture.release()
+                    self.capture = None
+                    self.camera_index = None
+                    self.consecutive_failures = 0
+                    rospy.sleep(self.retry_delay)
+                else:
+                    rospy.logwarn(
+                        "[%s] Failed to grab frame from camera index %s (%d/%d). Retrying same camera...",
+                        rospy.get_name(),
+                        self.camera_index,
+                        self.consecutive_failures,
+                        self.max_consecutive_failures,
+                    )
+                    rospy.sleep(self.retry_delay)
                 continue
 
-            message = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+            self.consecutive_failures = 0
+
+            try:
+                message = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+            except CvBridgeError as exc:
+                rospy.logerr("[%s] Failed to convert frame to ROS Image: %s", rospy.get_name(), exc)
+                rospy.sleep(self.retry_delay)
+                continue
+
             message.header.stamp = rospy.Time.now()
             message.header.frame_id = self.frame_id
             self.publisher.publish(message)
