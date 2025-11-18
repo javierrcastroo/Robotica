@@ -1,4 +1,0 @@
-<launch>
-  <include file="$(find battleship_vision)/launch/hand_camera.launch" />
-  <include file="$(find battleship_vision)/launch/board_camera.launch" />
-</launch>

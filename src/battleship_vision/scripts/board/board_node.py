@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 import os
+import json
 import cv2
 import numpy as np
 
 import rospy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
+from std_msgs.msg import String
 
 from board_config import USE_UNDISTORT_BOARD, BOARD_CAMERA_PARAMS_PATH, WARP_SIZE
 import board_ui
@@ -17,16 +19,17 @@ import battleship_logic
 
 class BoardNode(object):
     def __init__(self):
-        # --- ROS / bridge ---
         self.bridge = CvBridge()
         self.last_frame = None
 
-        # Topic configurable: por defecto, el del nodo de cámara del tablero
         image_topic = rospy.get_param("~image_topic", "board_camera/image_raw")
         rospy.loginfo(f"[board_node] Suscribiéndose a: {image_topic}")
         self.sub = rospy.Subscriber(image_topic, Image, self.cb_image, queue_size=1)
 
-        # --- Calibración cámara ---
+        # publicador de layout de tablero
+        self.board_pub = rospy.Publisher("battleship/board_layout", String, queue_size=10)
+
+        # calibración
         self.mtx = None
         self.dist = None
         if USE_UNDISTORT_BOARD and os.path.exists(BOARD_CAMERA_PARAMS_PATH):
@@ -35,13 +38,13 @@ class BoardNode(object):
             self.dist = data["dist_coeffs"]
             rospy.loginfo("[board_node] Undistort activado para tablero")
 
-        # --- Estado de los tableros (igual que en main) ---
+        # estado de tableros
         self.boards_state_list = [
             board_state.init_board_state("T1"),
             board_state.init_board_state("T2"),
         ]
 
-        # Ventanas e interacción con ratón
+        # ventanas
         cv2.namedWindow("Tablero")
         cv2.setMouseCallback("Tablero", board_ui.board_mouse_callback)
         cv2.namedWindow("Mascara tablero")
@@ -49,10 +52,9 @@ class BoardNode(object):
         cv2.namedWindow("Mascara barco x1")
         cv2.namedWindow("Mascara municion")
 
-        # Timer para procesar frames (bucle "while" sustituto)
+        # timer
         self.timer = rospy.Timer(rospy.Duration(1.0 / 30.0), self.timer_cb)
 
-    # --------------- callbacks ----------------
     def cb_image(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
@@ -67,16 +69,14 @@ class BoardNode(object):
 
         frame = self.last_frame.copy()
 
-        # (en tablero normalmente no espejeas; si quisieras, añade flip aquí)
-
-        # undistort si hay calibración
+        # undistort
         if self.mtx is not None and self.dist is not None:
             frame = cv2.undistort(frame, self.mtx, self.dist)
 
-        # detectar ORIGEN con ArUco cada frame
+        # origen ArUco
         aruco_utils.update_global_origin_from_aruco(frame, aruco_id=2)
 
-        # procesar todos los tableros con el origen global actual
+        # process boards
         vis, mask_b, mask_ship2, mask_ship1, mask_m, layouts = bp.process_all_boards(
             frame,
             self.boards_state_list,
@@ -86,20 +86,28 @@ class BoardNode(object):
             warp_size=WARP_SIZE,
         )
 
-        # validación lógica Battleship
+        # publicar layout (en JSON)
+        if layouts:
+            payload = {
+                "boards": layouts,
+            }
+            msg = String()
+            msg.data = json.dumps(payload, default=self.json_default)
+            self.board_pub.publish(msg)
+
+        # validación de cada layout (como antes)
         validation_map = {}
         for layout in layouts:
-            ok, msg = battleship_logic.evaluate_board(layout)
-            validation_map[layout["name"]] = (ok, msg)
-            print(f"[{layout['name']}] {msg}")
+            ok, msg_text = battleship_logic.evaluate_board(layout)
+            validation_map[layout["name"]] = (ok, msg_text)
+            print(f"[{layout['name']}] {msg_text}")
 
-        # dibujar resultados de validación sobre cada tablero
         for slot in self.boards_state_list:
             if slot["name"] in validation_map and slot["last_quad"] is not None:
-                ok, msg = validation_map[slot["name"]]
-                board_ui.draw_validation_result(vis, slot["last_quad"], msg, ok)
+                ok, msg_text = validation_map[slot["name"]]
+                board_ui.draw_validation_result(vis, slot["last_quad"], msg_text, ok)
 
-        # dibujar ORIGEN global si lo tenemos
+        # origen global
         if board_state.GLOBAL_ORIGIN is not None:
             gx, gy = board_state.GLOBAL_ORIGIN
             cv2.circle(vis, (int(gx), int(gy)), 10, (0, 255, 0), -1)
@@ -126,7 +134,6 @@ class BoardNode(object):
         if mask_m is not None:
             cv2.imshow("Mascara municion", mask_m)
 
-        # teclas
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord("q")):
             rospy.loginfo("[board_node] Saliendo por ESC/q")
@@ -136,12 +143,14 @@ class BoardNode(object):
 
         self.handle_keys(key, frame)
 
-    # --------------- lógica de teclas (idéntica al main) ---------------
+    @staticmethod
+    def json_default(o):
+        # para convertir tuples a listas si aparecen en layouts
+        if isinstance(o, tuple):
+            return list(o)
+        raise TypeError
+
     def handle_keys(self, key, frame):
-        # b = color tablero
-        # 2 = barco de dos casillas
-        # 1 = barco de una casilla
-        # m = color de la munición
         import board_tracker
         import object_tracker
         import board_ui as bu

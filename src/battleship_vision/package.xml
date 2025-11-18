@@ -2,20 +2,28 @@
 <package format="2">
   <name>battleship_vision</name>
   <version>0.0.1</version>
-  <description>Camera nodes for Battleship game setup with UR3.</description>
-  <maintainer email="maintainer@example.com">Maintainer</maintainer>
-  <license>MIT</license>
+  <description>
+    Vision-based Battleship (Hundir la Flota) with hand gesture input and board detection.
+  </description>
+
+  <!-- Cambia esto por tus datos -->
+  <maintainer email="tu.email@ejemplo.com">Tu Nombre</maintainer>
+  <license>BSD</license>
 
   <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>rospy</build_depend>
-  <build_depend>sensor_msgs</build_depend>
-  <build_depend>cv_bridge</build_depend>
 
-  <exec_depend>rospy</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>cv_bridge</exec_depend>
-  <exec_depend>image_transport</exec_depend>
+  <!-- Dependencias de runtime y build -->
+  <depend>rospy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+
+  <!-- Opcionales, por si usas cosas adicionales (puedes quitarlas si no) -->
+  <!-- <depend>message_runtime</depend> -->
+  <!-- <build_depend>message_generation</build_depend> -->
 
   <export>
+    <!-- Normalmente vacío para paquetes sólo Python -->
   </export>
 </package>

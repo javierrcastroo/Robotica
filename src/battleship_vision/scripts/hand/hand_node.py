@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import json
 import cv2
 import numpy as np
 from collections import deque
@@ -7,6 +8,7 @@ from collections import deque
 import rospy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
+from std_msgs.msg import String
 
 from hand_config import (
     PREVIEW_W, PREVIEW_H,
@@ -20,7 +22,7 @@ import ui
 from segmentation import (
     calibrate_from_roi,
     segment_hand_mask,
-    hsv_medians,  # asegúrate de que existe en segmentation.py
+    hsv_medians,
 )
 from features import compute_feature_vector
 from classifier import knn_predict
@@ -70,10 +72,13 @@ class HandNode(object):
         self.bridge = CvBridge()
         self.last_frame = None
 
-        # Topic configurable por parámetro (~image_topic), por defecto el de tu nodo de cámara
         image_topic = rospy.get_param("~image_topic", "hand_camera/image_raw")
         rospy.loginfo(f"[hand_node] Suscribiéndose a imagen en: {image_topic}")
         self.sub = rospy.Subscriber(image_topic, Image, self.cb_image, queue_size=1)
+
+        # Publisher de ataque y suscriptor de resultado
+        self.attack_pub = rospy.Publisher("battleship/attack", String, queue_size=10)
+        self.result_sub = rospy.Subscriber("battleship/attack_result", String, self.result_cb, queue_size=10)
 
         # --- Undistort cámara mano ---
         self.HAND_CAM_MTX = None
@@ -84,7 +89,7 @@ class HandNode(object):
             self.HAND_DIST = data["dist_coeffs"]
             rospy.loginfo("[hand_node] Undistort activado para la mano")
 
-        # --- Estado interno (igual que en main) ---
+        # --- Estado interno ---
         self.lower_skin = None
         self.upper_skin = None
         self.white_ref = None
@@ -97,17 +102,18 @@ class HandNode(object):
         self.pending_candidate = None
         self.gesture_window = GestureWindow()
         self.status_lines = ["Standby: haz 'demond' para activar el registro."]
+        self.last_result_msg = ""
 
-        # Ventanas e interacción con ratón
+        # Ventanas
         cv2.namedWindow("Mano")
         cv2.setMouseCallback("Mano", ui.mouse_callback)
         cv2.namedWindow("Mascara mano")
         cv2.namedWindow("Solo piel mano")
 
-        # Timer para procesar frames a ~30 fps
+        # Timer principal
         self.timer = rospy.Timer(rospy.Duration(1.0 / 30.0), self.timer_cb)
 
-    # ------------------ helpers de estado ------------------
+    # ---------- helpers estado ----------
     def set_state(self, new_state, lines):
         self.capture_state = new_state
         self.status_lines = lines
@@ -116,7 +122,7 @@ class HandNode(object):
     def set_status(self, lines):
         self.status_lines = lines
 
-    # ------------------ callback de imagen ------------------
+    # ---------- callback imagen ----------
     def cb_image(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
@@ -125,9 +131,26 @@ class HandNode(object):
             return
         self.last_frame = frame
 
-    # ------------------ bucle principal por Timer ------------------
+    # ---------- callback resultado ataque ----------
+    def result_cb(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except Exception as e:
+            rospy.logwarn(f"[hand_node] Error parseando resultado ataque: {e}")
+            return
+
+        cell = data.get("cell", {})
+        cell_name = cell.get("name", "?")
+        result = data.get("result", "unknown")
+        message = data.get("message", "")
+
+        rospy.loginfo(f"[hand_node] Resultado ataque en {cell_name}: {result} - {message}")
+        # actualizamos líneas de estado para que se vean en el HUD
+        self.last_result_msg = message or f"Resultado: {result} en {cell_name}"
+        self.status_lines = [self.last_result_msg]
+
+    # ---------- bucle principal ----------
     def timer_cb(self, event):
-        # Si aún no hay frame, no hacemos nada
         if self.last_frame is None:
             return
 
@@ -146,7 +169,7 @@ class HandNode(object):
         # ROI
         ui.draw_roi_rectangle(vis)
 
-        # segmentar mano con el HSV calibrado
+        # segmentar mano
         mask = segment_hand_mask(hsv, self.lower_skin, self.upper_skin)
         ui.draw_hand_box(vis, mask)
         skin_only = cv2.bitwise_and(frame, frame, mask=mask)
@@ -188,7 +211,6 @@ class HandNode(object):
         cv2.imshow("Mascara mano", mask)
         cv2.imshow("Solo piel mano", skin_only)
 
-        # gestión de teclado (igual que antes, pero sin while True)
         key = cv2.waitKey(1) & 0xFF
         if key in (27, ord('q')):
             rospy.loginfo("[hand_node] Saliendo por tecla ESC/Q")
@@ -227,7 +249,7 @@ class HandNode(object):
                     if len(self.acciones) >= MAX_SEQUENCE_LENGTH:
                         self.set_state(
                             "COOL",
-                            ["Secuencia completa, haz 'cool' para imprimirla."],
+                            ["Secuencia completa, haz 'cool' para lanzar el ataque."],
                         )
                     else:
                         self.set_state("CAPTURA", ["Gesto guardado. Muestra el siguiente gesto."])
@@ -240,8 +262,13 @@ class HandNode(object):
 
             elif self.capture_state == "COOL":
                 if resolved_label == PRINT_GESTURE and len(self.acciones) == MAX_SEQUENCE_LENGTH:
-                    rospy.loginfo(f"[hand_node] Secuencia final: {self.acciones}")
+                    # Aquí lanzamos el ataque
+                    self.send_attack(self.acciones)
+                    # guardamos también en JSON (comportamiento original)
+                    print("[INFO] Secuencia final:", self.acciones)
                     save_sequence_json(self.acciones)
+
+                    # limpiamos
                     self.acciones.clear()
                     self.pending_candidate = None
                     self.set_state(
@@ -249,11 +276,10 @@ class HandNode(object):
                         ["Standby: haz 'demond' para activar un nuevo registro."],
                     )
                 else:
-                    self.set_status(["Secuencia lista. Usa 'cool' para imprimirla."])
+                    self.set_status(["Secuencia lista. Usa 'cool' para lanzar el ataque."])
 
-        # -------- teclas de mano --------
+        # -------- teclas de mano (calibración, guardado, etc.) --------
         if key == ord('c'):
-
             if ui.roi_defined:
                 x0, x1 = sorted([ui.x_start, ui.x_end])
                 y0, y1 = sorted([ui.y_start, ui.y_end])
@@ -276,7 +302,7 @@ class HandNode(object):
                         "median": hsv_medians(roi_hsv),
                         "roi": (x0, x1, y0, y1),
                     }
-                    rospy.loginfo(f"[hand_node] calibrado blanco de referencia en ROI: {self.white_ref['median']}")
+                    rospy.loginfo(f"[hand_node] calibrado blanco ref en ROI: {self.white_ref['median']}")
                 else:
                     rospy.logwarn("[hand_node] ROI muy pequeño para referencia blanca")
             else:
@@ -316,6 +342,18 @@ class HandNode(object):
                 ord('n'): "nook",
             }
             self.current_label = mapping[key]
+
+    # ---------- envío del ataque al game_logic_node ----------
+    def send_attack(self, acciones):
+        # acciones es algo como ["0dedos", "4dedos"]
+        payload = {
+            "player": "P1",
+            "gestures": list(acciones),
+        }
+        msg = String()
+        msg.data = json.dumps(payload)
+        rospy.loginfo(f"[hand_node] Publicando ataque: {msg.data}")
+        self.attack_pub.publish(msg)
 
 
 def main():
