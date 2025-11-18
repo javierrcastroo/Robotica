@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import board_tracker
 import object_tracker
+import board_state
 import board_ui
 
 
@@ -160,15 +161,18 @@ def process_single_board(vis_img, frame_bgr, quad, slot, warp_size=500):
     _draw_points_on_warp(warp_img, ship_two_pts, H_warp, (0, 0, 255))
     _draw_points_on_warp(warp_img, ship_one_pts, H_warp, (0, 255, 255))
 
-    ship_two_cells_raw, ship_two_labels = _map_points_to_cells(
+    ship_two_cells_raw, ship_two_labels, ship_two_pairs = _map_points_to_cells(
         ship_two_pts, H_warp, warp_size
     )
-    ship_one_cells_raw, ship_one_labels = _map_points_to_cells(
+    ship_one_cells_raw, ship_one_labels, ship_one_pairs = _map_points_to_cells(
         ship_one_pts, H_warp, warp_size
     )
 
     slot["ship_two_cells"] = sorted(set(ship_two_cells_raw))
     slot["ship_one_cells"] = sorted(set(ship_one_cells_raw))
+
+    ship_two_detections = _build_detection_entries(ship_two_pairs)
+    ship_one_detections = _build_detection_entries(ship_one_pairs)
 
     display_entries = []
     for idx, label in enumerate(ship_two_labels, 1):
@@ -183,6 +187,8 @@ def process_single_board(vis_img, frame_bgr, quad, slot, warp_size=500):
         "ship_two_cells": slot["ship_two_cells"],
         "ship_one_cells": slot["ship_one_cells"],
         "board_size": board_tracker.BOARD_SQUARES,
+        "ship_two_detections": ship_two_detections,
+        "ship_one_detections": ship_one_detections,
     }
 
     if display_entries:
@@ -213,23 +219,49 @@ def draw_quad(img, quad, color=(0, 255, 255)):
 
 def _map_points_to_cells(points, H_warp, warp_size):
     if not points:
-        return [], []
+        return [], [], []
 
     pts = np.array(points, dtype=np.float32).reshape(-1, 1, 2)
     warped = cv2.perspectiveTransform(pts, H_warp).reshape(-1, 2)
     n = board_tracker.BOARD_SQUARES
     if n <= 0:
-        return [], []
+        return [], [], []
     cell_size = warp_size / n
 
     cells = []
     labels = []
-    for wx, wy in warped:
+    point_cell_pairs = []
+    for (wx, wy), (px, py) in zip(warped, points):
         col = _clip_cell_index(int(np.floor(wx / cell_size)), n)
         row = _clip_cell_index(int(np.floor(wy / cell_size)), n)
-        cells.append((row, col))
+        cell = (row, col)
+        cells.append(cell)
         labels.append(_format_cell_label(row, col))
-    return cells, labels
+        point_cell_pairs.append({"cell": cell, "pixel": (int(px), int(py))})
+    return cells, labels, point_cell_pairs
+
+
+def _build_detection_entries(point_cell_pairs):
+    entries = []
+    origin = board_state.GLOBAL_ORIGIN
+    for pair in point_cell_pairs:
+        cell = pair.get("cell")
+        pixel = pair.get("pixel")
+        if cell is None or pixel is None:
+            continue
+        offset = None
+        if origin is not None:
+            ox, oy = origin
+            px, py = pixel
+            offset = (px - ox, py - oy)
+        entries.append(
+            {
+                "cell": cell,
+                "pixel": pixel,
+                "offset_from_origin": offset,
+            }
+        )
+    return entries
 
 
 def _draw_points(img, points, color):

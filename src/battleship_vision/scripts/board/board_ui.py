@@ -83,10 +83,49 @@ def draw_board_hud(img):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255,255,255), 1, cv2.LINE_AA)
     cv2.putText(img, "m: calibrar MUN (ROI municion)", (10, y0 + 5*dy),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255,255,255), 1, cv2.LINE_AA)
-    cv2.putText(img, "Click izq: definir ROI", (10, y0 + 6*dy),
+    cv2.putText(img, "s: enviar layout (150 frames)", (10, y0 + 6*dy),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200,200,255), 1, cv2.LINE_AA)
+    cv2.putText(img, "Click izq: definir ROI", (10, y0 + 7*dy),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200,255,200), 1, cv2.LINE_AA)
-    cv2.putText(img, "Click dcho: punto de medida", (10, y0 + 7*dy),
+    cv2.putText(img, "Click dcho: punto de medida", (10, y0 + 8*dy),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200,255,200), 1, cv2.LINE_AA)
+
+
+def draw_capture_status(img, state, progress, lines):
+    y_base = 180
+    cv2.putText(
+        img,
+        f"Estado tablero: {state}",
+        (10, y_base),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 0),
+        2,
+    )
+
+    bar_x0, bar_y0 = 10, y_base + 15
+    bar_w, bar_h = 260, 14
+    cv2.rectangle(img, (bar_x0, bar_y0), (bar_x0 + bar_w, bar_y0 + bar_h), (80, 80, 80), 1)
+    fill_w = int(bar_w * max(0.0, min(1.0, progress)))
+    cv2.rectangle(
+        img,
+        (bar_x0, bar_y0),
+        (bar_x0 + fill_w, bar_y0 + bar_h),
+        (0, 200, 0),
+        -1,
+    )
+
+    for idx, line in enumerate(lines[:3]):
+        cv2.putText(
+            img,
+            line,
+            (10, y_base + 40 + idx * 18),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
 
 def draw_validation_result(img, quad, text, is_valid):

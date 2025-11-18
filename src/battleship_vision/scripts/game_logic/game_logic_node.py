@@ -63,6 +63,11 @@ class GameLogicNode(object):
             String,
             queue_size=10,
         )
+        self.board_request_pub = rospy.Publisher(
+            "battleship/board_request",
+            String,
+            queue_size=10,
+        )
 
         rospy.loginfo("[game_logic_node] Iniciado. Esperando tablero y ataques...")
 
@@ -111,6 +116,8 @@ class GameLogicNode(object):
         except Exception as e:
             rospy.logwarn(f"[game_logic_node] Error parseando ataque: {e}")
             return
+
+        self.request_board_layout("attack_received")
 
         gestures = data.get("gestures", [])
         player = data.get("player", "P1")
@@ -240,6 +247,12 @@ class GameLogicNode(object):
         msg.data = json.dumps(payload)
         rospy.loginfo(f"[game_logic_node] Resultado ataque: {msg.data}")
         self.result_pub.publish(msg)
+
+    def request_board_layout(self, reason):
+        msg = String()
+        msg.data = reason
+        self.board_request_pub.publish(msg)
+        rospy.loginfo(f"[game_logic_node] Petición de layout enviada: {reason}")
 
 
 def main():
