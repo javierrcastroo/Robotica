@@ -1,0 +1,8 @@
+prefix=/home/laboratorio/ros_workspace/Robotica/devel
+
+Name: battleship_vision
+Description: Description of battleship_vision
+Version: 0.0.1
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

@@ -1,0 +1,2 @@
+battleship_vision
+-DCATKIN_DEVEL_PREFIX=/home/laboratorio/ros_workspace/Robotica/devel -DCMAKE_INSTALL_PREFIX=/home/laboratorio/ros_workspace/Robotica/install -G Unix Makefiles

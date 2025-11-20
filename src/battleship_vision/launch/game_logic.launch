@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="battleship_vision"
+        type="game_logic_node.py"
+        name="game_logic_node"
+        output="screen" />
+</launch>
